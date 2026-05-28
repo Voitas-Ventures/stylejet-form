@@ -14,7 +14,7 @@
    ========================================================================= */
 (function () {
   // --- konfigurace --------------------------------------------------------
-  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@73e3bd2/airports.json';
+  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@0.0.1/airports.json';
   var MAX_RESULTS  = 8;
   var MIN_CHARS    = 2;
 
