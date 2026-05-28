@@ -14,7 +14,7 @@
    ========================================================================= */
 (function () {
   // --- konfigurace --------------------------------------------------------
-  var AIRPORTS_URL = 'https://TVUJ-HOSTING/airports.json'; // <-- UPRAV
+  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@main/airports.json';
   var MAX_RESULTS  = 8;
   var MIN_CHARS    = 2;
 
