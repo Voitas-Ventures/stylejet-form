@@ -1,20 +1,13 @@
 /* =========================================================================
-   airport-autocomplete.js  —  sdílený našeptávač letišť (DOČASNÁ verze)
+   airport-autocomplete.js  v0.0.2  —  sdílený našeptávač letišť
    -------------------------------------------------------------------------
-   Hostuj tenhle soubor i airports.json na stejném místě
-   (např. GitHub repo + jsDelivr, Cloudflare Pages, Netlify, S3...).
-
-   Napojí se na každý <input class="airport-input"> na stránce.
-   Vybrané letiště zapíše:
-     - do inputu jako čitelný text  "Prague (PRG)"
-     - jeho kód do skrytého pole, jehož NAME je v atributu data-code-field
-
+   Změna oproti 0.0.1: kódové pole se hledá v rámci nejbližšího [data-leg]
+   rodiče (s fallbackem na document), aby fungovaly i opakované úseky.
    ⚡ PŘECHOD NA AVINODE = upravíš JEN funkci fetchAirports() níže.
-      Nic jiného (formulář, skrytá pole, sessionStorage, krok 2) se nemění.
    ========================================================================= */
 (function () {
   // --- konfigurace --------------------------------------------------------
-  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/Voitas-Ventures/stylejet@main/airports.json';
+  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@0.0.2/airports.json';
   var MAX_RESULTS  = 8;
   var MIN_CHARS    = 2;
 
@@ -45,13 +38,6 @@
     }
     return res;
   }
-  /* ---- AŽ DORAZÍ AVINODE, nahraď tělo funkce výše tímhle: ----------------
-  async function fetchAirports(query) {
-    if (query.trim().length < MIN_CHARS) return [];
-    var r = await fetch('/api/airports?q=' + encodeURIComponent(query));
-    return await r.json(); // proxy vrací stejný tvar {code,name,city,country}
-  }
-  ------------------------------------------------------------------------ */
 
   // --- minimální styl seznamu (klidně přepiš vlastním CSS ve Webflow) -----
   function injectStyles() {
@@ -87,8 +73,10 @@
     var wrap = input.parentNode;
     if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
 
+    // ZMĚNA v 0.0.2: kód hledáme uvnitř nejbližšího [data-leg], jinak v dokumentu
+    var scope = input.closest('[data-leg]') || document;
     var codeField = input.dataset.codeField
-      ? document.querySelector('[name="' + input.dataset.codeField + '"]')
+      ? scope.querySelector('[name="' + input.dataset.codeField + '"]')
       : null;
 
     var list = document.createElement('div');
@@ -135,22 +123,20 @@
     }, 200);
 
     input.addEventListener('input', function () {
-      if (codeField) codeField.value = ''; // dokud uživatel nevybere, kód je prázdný
+      if (codeField) codeField.value = '';
       run();
     });
     input.addEventListener('keydown', function (e) {
       if (!list.classList.contains('is-open')) return;
-      if (e.key === 'ArrowDown')      { e.preventDefault(); setActive(active + 1); }
-      else if (e.key === 'ArrowUp')   { e.preventDefault(); setActive(active - 1); }
-      else if (e.key === 'Enter' && active > -1) { e.preventDefault(); choose_fromActive(); }
-      else if (e.key === 'Escape')    { close(); }
+      if (e.key === 'ArrowDown')    { e.preventDefault(); setActive(active + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(active - 1); }
+      else if (e.key === 'Enter' && active > -1) {
+        e.preventDefault();
+        items[active].dispatchEvent(new MouseEvent('mousedown', { cancelable: true }));
+      }
+      else if (e.key === 'Escape')  { close(); }
     });
     input.addEventListener('blur', function () { setTimeout(close, 150); });
-
-    function choose_fromActive() {
-      // znovu spočítat výběr z aktivní položky není potřeba – stačí klik
-      items[active].dispatchEvent(new MouseEvent('mousedown', { cancelable: true }));
-    }
   }
 
   function attachAll() {
@@ -161,7 +147,6 @@
   if (document.readyState !== 'loading') attachAll();
   else document.addEventListener('DOMContentLoaded', attachAll);
 
-  // pro dynamicky přidané úseky ("Přidat úsek") zavolej znovu:
-  //   window.AirportAutocomplete.attachAll();
+  // pro dynamicky přidané úseky volej: window.AirportAutocomplete.attachAll()
   window.AirportAutocomplete = { attachAll: attachAll, fetchAirports: fetchAirports };
 })();
