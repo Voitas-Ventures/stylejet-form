@@ -1,17 +1,14 @@
 /* =========================================================================
-   airport-autocomplete.js  v0.0.2  —  sdílený našeptávač letišť
+   airport-autocomplete.js  v0.0.3  —  sdílený našeptávač letišť
    -------------------------------------------------------------------------
-   Změna oproti 0.0.1: kódové pole se hledá v rámci nejbližšího [data-leg]
-   rodiče (s fallbackem na document), aby fungovaly i opakované úseky.
+   Změna oproti 0.0.2: jen sjednocení AIRPORTS_URL na @0.0.3 (kód identický).
    ⚡ PŘECHOD NA AVINODE = upravíš JEN funkci fetchAirports() níže.
    ========================================================================= */
 (function () {
-  // --- konfigurace --------------------------------------------------------
-  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@0.0.2/airports.json';
+  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@0.0.3/airports.json';
   var MAX_RESULTS  = 8;
   var MIN_CHARS    = 2;
 
-  // --- načtení dat (jednou, s cache) -------------------------------------
   var _airportsPromise = null;
   function loadAirports() {
     if (!_airportsPromise) {
@@ -39,7 +36,6 @@
     return res;
   }
 
-  // --- minimální styl seznamu (klidně přepiš vlastním CSS ve Webflow) -----
   function injectStyles() {
     if (document.getElementById('airport-ac-styles')) return;
     var s = document.createElement('style');
@@ -55,7 +51,6 @@
     document.head.appendChild(s);
   }
 
-  // --- debounce -----------------------------------------------------------
   function debounce(fn, ms) {
     var t;
     return function () {
@@ -65,7 +60,6 @@
     };
   }
 
-  // --- napojení na jeden input -------------------------------------------
   function attach(input) {
     if (input._acReady) return;
     input._acReady = true;
@@ -73,7 +67,6 @@
     var wrap = input.parentNode;
     if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
 
-    // ZMĚNA v 0.0.2: kód hledáme uvnitř nejbližšího [data-leg], jinak v dokumentu
     var scope = input.closest('[data-leg]') || document;
     var codeField = input.dataset.codeField
       ? scope.querySelector('[name="' + input.dataset.codeField + '"]')
@@ -147,6 +140,5 @@
   if (document.readyState !== 'loading') attachAll();
   else document.addEventListener('DOMContentLoaded', attachAll);
 
-  // pro dynamicky přidané úseky volej: window.AirportAutocomplete.attachAll()
   window.AirportAutocomplete = { attachAll: attachAll, fetchAirports: fetchAirports };
 })();
