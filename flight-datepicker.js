@@ -1,5 +1,5 @@
 /* =========================================================================
-   flight-datepicker.js  v0.0.3  —  datum + čas picker (flatpickr)
+   flight-datepicker.js  v0.0.5  —  datum + čas picker (flatpickr)
                                     s úplnou časovou validací
    -------------------------------------------------------------------------
    Vyžaduje flatpickr (Site Settings → Custom Code → Head Code):
@@ -43,6 +43,9 @@
 
   function attachAll(root) {
     if (!ready()) return;
+    // Defenzivně: když nám sem dolítne např. Event (DOMContentLoaded handler),
+    // root je truthy, ale querySelectorAll na něm není – fallbackni na document.
+    if (root && typeof root.querySelectorAll !== 'function') root = null;
     (root || document).querySelectorAll(DATE_SELECTOR).forEach(initPicker);
     var form = (root && root.closest ? root.closest(FORM_SELECTOR) : null)
             || document.querySelector(FORM_SELECTOR);
@@ -114,7 +117,7 @@
   });
 
   if (document.readyState !== 'loading') attachAll();
-  else document.addEventListener('DOMContentLoaded', attachAll);
+  else document.addEventListener('DOMContentLoaded', function () { attachAll(); });
 
   window.FlightDatepicker = { attachAll: attachAll, init: initPicker, recompute: recompute };
 })();
