@@ -1,20 +1,15 @@
 /* =========================================================================
-   booking-form.js  v0.0.2  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.3  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
-   Hostuj vedle airport-autocomplete.js. Spolupracuje s ním.
-   Pracuje s formulářem [data-step1-form] a řeší:
-     - přepínač Jednosměrný / Zpáteční
-     - tlačítko swap (Odkud ↔ Kam) – viditelné jen v "return"
-     - přidat / odebrat úsek v "oneway" (max 5)
-     - serializaci stavu do sessionStorage (strukturovaný JSON)
-     - obnovení stavu při návratu (i na "libovolné stránce s formulářem")
-
-   Datový model v sessionStorage (klíč "formStep1"):
-   {
-     tripType: "return" | "oneway",
-     legs: [ { from, fromCode, to, toCode, pax, departAt }, ... ],
-     returnAt: "..."    // jen pro return
-   }
+   Změny oproti 0.0.2:
+   - restoreState() volá AirportAutocomplete.attachAll() po naklonování úseků
+     (fix: našeptávač se po návratu z kroku 2 nepřipojil na obnovené úseky).
+   - cloneLeg / restoreState dispatchují CustomEvent 'legAdded' na formuláři,
+     aby další funkce (flight-datepicker apod.) mohly inicializovat své
+     widgety na nově vzniklých úsecích.
+   - Při kliku na "Pokračovat" se navíc volá FlightDatepicker.validate(),
+     které zkontroluje sekvenci datumů (≥ teď, sekvenční úseky, return ≥ depart)
+     a v případě chyby ukáže nativní validační tooltip u problematického inputu.
    ========================================================================= */
 (function () {
   var STORAGE_KEY = 'formStep1';
@@ -23,8 +18,15 @@
 
   function $(sel, ctx)  { return (ctx || document).querySelector(sel); }
   function $$(sel, ctx) { return (ctx || document).querySelectorAll(sel); }
-  function val(ctx, sel)        { var el = ctx.querySelector(sel); return el ? el.value : ''; }
-  function setVal(ctx, sel, v)  { var el = ctx.querySelector(sel); if (el) el.value = (v != null ? v : ''); }
+  function val(ctx, sel)       { var el = ctx.querySelector(sel); return el ? el.value : ''; }
+  function setVal(ctx, sel, v) { var el = ctx.querySelector(sel); if (el) el.value = (v != null ? v : ''); }
+
+  function dispatchLegAdded(form, leg) {
+    form.dispatchEvent(new CustomEvent('legAdded', {
+      detail: { leg: leg, form: form },
+      bubbles: true,
+    }));
+  }
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
@@ -37,24 +39,18 @@
     var addBtn  = $('[data-add-leg]', form);
     if (!nextBtn) return;
 
-    // 1) Obnovit stav (mód, úseky, hodnoty) ze sessionStorage
     restoreState(form);
-
-    // 2) Sladit UI s režimem (datum návratu, swap, add-leg, remove na úsecích)
     syncMode(form);
 
-    // 3) Změna režimu
     $$('input[type="radio"][name="trip-type"]', form).forEach(function (r) {
       r.addEventListener('change', function () { onModeChange(form); });
     });
 
-    // 4) Přidat úsek
     if (addBtn) addBtn.addEventListener('click', function (e) {
       e.preventDefault();
       addLeg(form);
     });
 
-    // 5) Delegace: Odstranit úsek + swap (kvůli dynamicky přidaným úsekům)
     form.addEventListener('click', function (e) {
       var remove = e.target.closest('[data-remove-leg]');
       if (remove && form.contains(remove)) {
@@ -69,10 +65,28 @@
       }
     });
 
-    // 6) Pokračovat
     nextBtn.addEventListener('click', function (e) {
       e.preventDefault();
       if (!form.reportValidity()) return;
+
+      // v0.0.3: validace sekvence datumů
+      if (window.FlightDatepicker && window.FlightDatepicker.validate) {
+        var err = window.FlightDatepicker.validate(form);
+        if (err && err.input) {
+          err.input.setCustomValidity(err.message);
+          form.reportValidity();
+          // při další úpravě toho inputu chybu zase odstraň, ať se dá pokračovat
+          var clearOnce = function () {
+            err.input.setCustomValidity('');
+            err.input.removeEventListener('input', clearOnce);
+            err.input.removeEventListener('change', clearOnce);
+          };
+          err.input.addEventListener('input', clearOnce);
+          err.input.addEventListener('change', clearOnce);
+          return;
+        }
+      }
+
       saveState(form);
       window.location.href = STEP2_URL;
     });
@@ -88,23 +102,18 @@
     if (r) r.checked = true;
   }
 
-  // ---- UI sync podle režimu -----------------------------------------------
   function syncMode(form) {
     var isReturn = getMode(form) === 'return';
     var legs = $$('[data-leg]', form);
 
-    // Datum návratu – jen v return
     $$('[data-return-wrap]', form).forEach(function (el) {
       el.style.display = isReturn ? '' : 'none';
     });
-    // Swap – jen v return
     $$('[data-swap-route]', form).forEach(function (el) {
       el.style.display = isReturn ? '' : 'none';
     });
-    // Přidat úsek – jen v oneway a jen pokud máme < MAX
     var addBtn = $('[data-add-leg]', form);
     if (addBtn) addBtn.style.display = (!isReturn && legs.length < MAX_LEGS) ? '' : 'none';
-    // Odstranit – na prvním úseku skrýt, na ostatních ukázat
     legs.forEach(function (leg, i) {
       $$('[data-remove-leg]', leg).forEach(function (btn) {
         btn.style.display = (i === 0) ? 'none' : '';
@@ -114,11 +123,9 @@
 
   function onModeChange(form) {
     if (getMode(form) === 'return') {
-      // přepnutí do "return" → zachovat jen první úsek
       var legs = $$('[data-leg]', form);
       for (var i = legs.length - 1; i > 0; i--) legs[i].remove();
     } else {
-      // přepnutí do "oneway" → vynulovat return-at (v oneway nepoužíváme)
       $$('[name="return-at"]', form).forEach(function (el) { el.value = ''; });
     }
     syncMode(form);
@@ -138,22 +145,23 @@
 
   // ---- add / remove leg ---------------------------------------------------
   function addLeg(form) {
-    cloneLeg(form);
+    var clone = cloneLeg(form);
+    if (!clone) return;
     if (window.AirportAutocomplete && window.AirportAutocomplete.attachAll) {
       window.AirportAutocomplete.attachAll();
     }
+    dispatchLegAdded(form, clone);
     syncMode(form);
   }
 
   function removeLeg(btn, form) {
     var leg = btn.closest('[data-leg]');
     if (!leg) return;
-    if ($$('[data-leg]', form).length <= 1) return; // nesmí zbýt 0
+    if ($$('[data-leg]', form).length <= 1) return;
     leg.remove();
     syncMode(form);
   }
 
-  // klonuje první úsek na konec (bez následného syncMode, volaný společně)
   function cloneLeg(form) {
     var legs = $$('[data-leg]', form);
     if (legs.length >= MAX_LEGS) return null;
@@ -162,11 +170,9 @@
 
     var clone = first.cloneNode(true);
 
-    // klon nikdy nemá datum návratu (to patří jen k prvnímu úseku v "return")
     var rw = clone.querySelector('[data-return-wrap]');
     if (rw) rw.remove();
 
-    // vyčistit všechny hodnoty v klonu
     $$('input, select, textarea', clone).forEach(function (inp) {
       if (inp.type === 'checkbox' || inp.type === 'radio') inp.checked = false;
       else inp.value = '';
@@ -209,13 +215,11 @@
 
     setMode(form, state.tripType === 'oneway' ? 'oneway' : 'return');
 
-    // zajistit potřebný počet úseků v DOM
     var needed = Math.min(state.legs.length, MAX_LEGS);
     while ($$('[data-leg]', form).length < needed) {
       if (!cloneLeg(form)) break;
     }
 
-    // naplnit hodnoty
     var legs = $$('[data-leg]', form);
     state.legs.forEach(function (l, i) {
       var leg = legs[i];
@@ -231,5 +235,14 @@
     if (state.tripType === 'return' && state.returnAt) {
       setVal(form, '[name="return-at"]', state.returnAt);
     }
+
+    if (legs.length > 1 && window.AirportAutocomplete && window.AirportAutocomplete.attachAll) {
+      window.AirportAutocomplete.attachAll();
+    }
+
+    legs.forEach(function (leg, i) {
+      if (i === 0) return;
+      dispatchLegAdded(form, leg);
+    });
   }
 })();
