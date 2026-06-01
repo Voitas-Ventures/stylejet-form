@@ -1,6 +1,11 @@
 /* =========================================================================
-   booking-form.js  v0.0.7  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.8  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.7:
+   - `itinerary-readable` používá `<br>` místo `\n` jako oddělovač řádků,
+     aby se v HTML e-mailové notifikaci vykreslovaly jednotlivé úseky
+     na samostatných řádcích (čistý `\n` HTML collapsuje do mezery).
+
    Změny oproti 0.0.6:
    - Nové hidden pole `itinerary-readable`: lidsky čitelný itinerář pro
      e-mailovou notifikaci. Generuje se vedle strojového `itinerary` JSONu.
@@ -106,7 +111,7 @@
         ' | ' + parts.join(' | ')
       );
     });
-    return lines.join('\n');
+    return lines.join('<br>');
   }
   function setIfExists(ctx, sel, v) {
     if (!ctx) return;
