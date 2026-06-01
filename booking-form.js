@@ -1,6 +1,12 @@
 /* =========================================================================
-   booking-form.js  v0.0.6  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.7  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.6:
+   - Nové hidden pole `itinerary-readable`: lidsky čitelný itinerář pro
+     e-mailovou notifikaci. Generuje se vedle strojového `itinerary` JSONu.
+   - Strojové pole `itinerary` už neobsahuje interní `currentStep` —
+     v JSONu zůstává jen tripType / legs / returnAt (čistá data poptávky).
+
    Změny oproti 0.0.4 (předchozí deployed verze):
    - One-page režim: pokud jsou step 1 i step 2 wrapper na stejné stránce
      (detekce přes [data-step="1"] a [data-step="2"]), Pokračovat / Zpět už
@@ -9,10 +15,8 @@
      (např. step 1 form na homepage hero), Pokračovat uloží stav, označí
      currentStep='step2' a redirectne na /poptavka, kde se rovnou ukáže krok 2.
    - Logika dříve v krok-2-custom-code.html je vstřebána sem: populace
-     skrytého <textarea name="itinerary">, Zpět, vyčištění sessionStorage
-     po Submit. krok-2-custom-code.html lze odstranit.
-   - currentStep ('step1'|'step2') přibyl do sessionStorage objektu pro
-     refresh-persistenci a pro auto-advance při příchodu z cross-page.
+     skrytých polí, Zpět, vyčištění sessionStorage po Submit.
+   - currentStep ('step1'|'step2') v sessionStorage pro refresh-persistenci.
    ========================================================================= */
 (function () {
   var STORAGE_KEY  = 'formStep1';
@@ -67,16 +71,42 @@
     var saved = sessionStorage.getItem(STORAGE_KEY);
     if (!saved) return;
 
-    var itinerary = step2Form.querySelector('[name="itinerary"]');
-    if (itinerary) itinerary.value = saved;
+    var s;
+    try { s = JSON.parse(saved); } catch (e) { return; }
+    if (!s) return;
 
-    try {
-      var s = JSON.parse(saved);
-      setIfExists(step2Form, '[name="trip-type-readable"]',
-        s.tripType === 'return' ? 'Zpáteční' : 'Jednosměrný');
-      setIfExists(step2Form, '[name="legs-count"]',
-        String(s.legs ? s.legs.length : ''));
-    } catch (e) {}
+    // strojový JSON — bez interního currentStep (čistá data poptávky)
+    var clean = { tripType: s.tripType, legs: s.legs || [] };
+    if (s.tripType === 'return' && s.returnAt) clean.returnAt = s.returnAt;
+
+    setIfExists(step2Form, '[name="itinerary"]', JSON.stringify(clean));
+    setIfExists(step2Form, '[name="trip-type-readable"]',
+      s.tripType === 'return' ? 'Zpáteční' : 'Jednosměrný');
+    setIfExists(step2Form, '[name="legs-count"]',
+      String(s.legs ? s.legs.length : ''));
+    setIfExists(step2Form, '[name="itinerary-readable"]', buildReadable(s));
+  }
+
+  // sestaví lidsky čitelný itinerář pro e-mailovou notifikaci
+  function buildReadable(s) {
+    var lines = [];
+    lines.push('Let: ' + (s.tripType === 'return' ? 'Zpáteční' : 'Jednosměrný'));
+    (s.legs || []).forEach(function (leg, i) {
+      var parts = [
+        'cestujících: ' + (leg.pax || '?'),
+        'odlet: '       + (leg.departAt || '?'),
+      ];
+      // datum návratu náleží jen prvnímu úseku Zpáteční cesty
+      if (i === 0 && s.tripType === 'return' && s.returnAt) {
+        parts.push('návrat: ' + s.returnAt);
+      }
+      lines.push(
+        'Úsek ' + (i + 1) + ': ' +
+        (leg.from || '?') + ' -> ' + (leg.to || '?') +
+        ' | ' + parts.join(' | ')
+      );
+    });
+    return lines.join('\n');
   }
   function setIfExists(ctx, sel, v) {
     if (!ctx) return;
