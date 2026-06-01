@@ -1,154 +1,120 @@
 /* =========================================================================
-   flight-datepicker.js  v0.0.3  —  datum + čas picker (flatpickr) + validace
+   flight-datepicker.js  v0.0.3  —  datum + čas picker (flatpickr)
+                                    s úplnou časovou validací
    -------------------------------------------------------------------------
-   Vyžaduje flatpickr (Site Settings → Head Code):
+   Vyžaduje flatpickr (Site Settings → Custom Code → Head Code):
      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/themes/dark.css">
      <script src="https://cdn.jsdelivr.net/npm/flatpickr@4"></script>
      <script src="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/l10n/cs.js"></script>
 
-   Napojí flatpickr na <input class="flight-date-input">, dynamicky řeší
-   minDate při otevření (depart→return, úsek N→N+1, vše ≥ teď). Exponuje
-   FlightDatepicker.validate(form), které booking-form.js volá při Pokračovat
-   a vrací { input, message } v případě chyby.
+   Validační pravidla:
+     1) Žádný úsek nemůže mít datum/čas v minulosti (minDate = teď).
+     2) Datum návratu ≥ datum odletu prvního úseku (v módu Zpáteční).
+     3) Každý další úsek ≥ datum odletu předchozího úseku (multi-leg řetěz).
+   Změna jakékoli hodnoty řetěz přepočítá; navazující neplatné hodnoty se
+   vyčistí, ať uživatel vidí, že je třeba znovu vybrat.
    ========================================================================= */
 (function () {
-  var DATE_FORMAT = 'd. m. Y H:i';
+  var FORM_SELECTOR  = '[data-step1-form]';
+  var DATE_SELECTOR  = '.flight-date-input';
+  var DEPART_NAME    = 'depart-at';
+  var RETURN_NAME    = 'return-at';
 
-  function fpReady() { return typeof window !== 'undefined' && !!window.flatpickr; }
+  function ready() { return typeof window !== 'undefined' && !!window.flatpickr; }
 
-  // ---- získání Date hodnoty z inputu --------------------------------------
-  function getInputDate(input) {
-    if (!input) return null;
-    if (input._flatpickr && input._flatpickr.selectedDates && input._flatpickr.selectedDates.length) {
-      return input._flatpickr.selectedDates[0];
-    }
-    if (input.value && window.flatpickr && window.flatpickr.parseDate) {
-      var d = window.flatpickr.parseDate(input.value, DATE_FORMAT);
-      if (d) return d;
-    }
-    return null;
-  }
-
-  // ---- minDate podle kontextu inputu --------------------------------------
-  function computeMinDateFor(input) {
-    var now = new Date();
-    var leg = input.closest('[data-leg]');
-    var form = input.closest('[data-step1-form]') || document;
-    if (!leg) return now;
-
-    var name = input.getAttribute('name');
-
-    // return-at musí být ≥ depart-at toho samého úseku (prvního, v "return" módu)
-    if (name === 'return-at') {
-      var depart = leg.querySelector('[name="depart-at"]');
-      var dDate = getInputDate(depart);
-      return (dDate && dDate > now) ? dDate : now;
-    }
-
-    // depart-at úseku N musí být ≥ depart-at úseku N-1
-    if (name === 'depart-at') {
-      var allLegs = form.querySelectorAll('[data-leg]');
-      var legIndex = Array.prototype.indexOf.call(allLegs, leg);
-      if (legIndex > 0) {
-        var prevLeg = allLegs[legIndex - 1];
-        var prevDepart = prevLeg.querySelector('[name="depart-at"]');
-        var pDate = getInputDate(prevDepart);
-        if (pDate && pDate > now) return pDate;
-      }
-      return now;
-    }
-
-    return now;
-  }
-
-  // ---- init flatpickru na jednom inputu -----------------------------------
-  function init(input) {
-    if (!input || input._fpReady || !fpReady()) return;
+  // ---- init / attach ------------------------------------------------------
+  function initPicker(input) {
+    if (!input || input._fpReady || !ready()) return;
     input._fpReady = true;
     window.flatpickr(input, {
       enableTime: true,
       time_24hr: true,
-      dateFormat: DATE_FORMAT,
+      dateFormat: 'd. m. Y H:i',           // 01. 06. 2026 14:30
       locale: (window.flatpickr.l10ns && window.flatpickr.l10ns.cs) || 'default',
-      minDate: new Date(),
+      minDate: new Date(),                  // teď (datum + čas) – pravidlo 1
       minuteIncrement: 15,
       allowInput: false,
-      disableMobile: false,
-      onOpen: function (selectedDates, dateStr, instance) {
-        // při každém otevření přepočítej minDate dle aktuálního kontextu
-        instance.set('minDate', computeMinDateFor(input));
+      onChange: function (selectedDates, dateStr, instance) {
+        var form = instance.input.closest(FORM_SELECTOR);
+        if (form) recompute(form);
       },
     });
   }
 
   function attachAll(root) {
-    if (!fpReady()) return;
-    (root || document).querySelectorAll('.flight-date-input').forEach(init);
+    if (!ready()) return;
+    (root || document).querySelectorAll(DATE_SELECTOR).forEach(initPicker);
+    var form = (root && root.closest ? root.closest(FORM_SELECTOR) : null)
+            || document.querySelector(FORM_SELECTOR);
+    if (form) recompute(form);
   }
 
-  // ---- validace celé sekvence při Pokračovat ------------------------------
-  // Vrací null pokud OK, nebo { input: Element, message: '...' }
-  function validate(form) {
-    if (!form) return null;
-    var now = new Date();
-    var legs = form.querySelectorAll('[data-leg]');
+  // ---- recompute (řetězení minDate napříč všemi pickery) -----------------
+  var recomputing = false;
 
-    var prevDepart = null;
-    for (var i = 0; i < legs.length; i++) {
-      var dInput = legs[i].querySelector('[name="depart-at"]');
-      if (!dInput) continue;
-      var d = getInputDate(dInput);
-      if (!d) continue; // prázdné – HTML5 required to chytí samo
+  function recompute(form) {
+    if (recomputing || !form) return;
+    recomputing = true;
+    try {
+      var now = new Date();
+      var prev = now;
 
-      if (d < now) {
-        return { input: dInput, message: 'Datum a čas u úseku ' + (i + 1) + ' nesmí být v minulosti.' };
-      }
-      if (prevDepart && d < prevDepart) {
-        return {
-          input: dInput,
-          message: 'Datum a čas u úseku ' + (i + 1) + ' musí být později než u úseku ' + i + '.',
-        };
-      }
-      prevDepart = d;
-    }
+      // pravidlo 1 + 3: minDate každého depart-at = max(teď, předchozí depart-at)
+      form.querySelectorAll('[data-leg]').forEach(function (leg) {
+        var inp = leg.querySelector('[name="' + DEPART_NAME + '"]');
+        if (!inp || !inp._flatpickr) return;
+        var fp = inp._flatpickr;
+        fp.set('minDate', prev);
 
-    // return-at – jen pokud je viditelný (return mód)
-    var returnInput = form.querySelector('[name="return-at"]');
-    var returnWrap = form.querySelector('[data-return-wrap]');
-    var returnVisible = returnWrap && getComputedStyle(returnWrap).display !== 'none';
-
-    if (returnInput && returnVisible) {
-      var r = getInputDate(returnInput);
-      if (r) {
-        if (r < now) {
-          return { input: returnInput, message: 'Datum a čas návratu nesmí být v minulosti.' };
+        var cur = fp.selectedDates[0];
+        if (cur && cur < prev) {
+          fp.clear();                       // neplatná hodnota → vyčistit
+        } else if (cur) {
+          prev = cur;                        // posunout dolní hranici dál
         }
-        var firstDepartInput = legs[0] ? legs[0].querySelector('[name="depart-at"]') : null;
-        var firstDepart = getInputDate(firstDepartInput);
-        if (firstDepart && r < firstDepart) {
-          return {
-            input: returnInput,
-            message: 'Datum a čas návratu musí být později než datum a čas odletu.',
-          };
-        }
-      }
-    }
+      });
 
-    return null;
+      // pravidlo 2: return-at ≥ první depart-at (v "return" módu)
+      var returnInp = form.querySelector('[name="' + RETURN_NAME + '"]');
+      if (returnInp && returnInp._flatpickr) {
+        var firstDep = form.querySelector('[data-leg] [name="' + DEPART_NAME + '"]');
+        var minR = (firstDep && firstDep._flatpickr && firstDep._flatpickr.selectedDates[0]) || now;
+        var rfp = returnInp._flatpickr;
+        rfp.set('minDate', minR);
+        var rcur = rfp.selectedDates[0];
+        if (rcur && rcur < minR) rfp.clear();
+      }
+    } finally {
+      recomputing = false;
+    }
   }
 
-  // ---- napojení na lifecycle z booking-form.js ----------------------------
+  // ---- event listenery od booking-form.js --------------------------------
+  // Registrujeme okamžitě (ne v DOMContentLoaded), aby případné legAdded
+  // dispatchnuté během restoreState v booking-form.js neproletělo nezachycené.
   document.addEventListener('legAdded', function (e) {
     if (e.detail && e.detail.leg) attachAll(e.detail.leg);
     else attachAll();
   });
 
+  document.addEventListener('legRemoved', function (e) {
+    var form = (e.detail && e.detail.form) || document.querySelector(FORM_SELECTOR);
+    if (form) recompute(form);
+  });
+
+  document.addEventListener('tripTypeChanged', function (e) {
+    var form = (e.detail && e.detail.form) || document.querySelector(FORM_SELECTOR);
+    if (!form) return;
+    // přepnutí do oneway → return-at picker řádně vyčistit (i interní stav)
+    if (e.detail && e.detail.mode === 'oneway') {
+      var returnInp = form.querySelector('[name="' + RETURN_NAME + '"]');
+      if (returnInp && returnInp._flatpickr) returnInp._flatpickr.clear();
+    }
+    recompute(form);
+  });
+
   if (document.readyState !== 'loading') attachAll();
   else document.addEventListener('DOMContentLoaded', attachAll);
 
-  window.FlightDatepicker = {
-    attachAll: attachAll,
-    init: init,
-    validate: validate,
-  };
+  window.FlightDatepicker = { attachAll: attachAll, init: initPicker, recompute: recompute };
 })();
