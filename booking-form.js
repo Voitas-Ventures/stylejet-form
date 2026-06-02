@@ -1,6 +1,16 @@
 /* =========================================================================
-   booking-form.js  v0.0.15  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.16  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.15:
+   - Fix: `<select>` elementy se po refreshi neobnovovaly z draftu.
+     restoreStep2Draft měl pojistku `!el.value` (nepřepisovat to, co je),
+     ale po refreshi má select default option s NON-empty hodnotou
+     (např. `value="question"` u placeholderu „Jaký typ letu poptáváte?"),
+     takže `!el.value` byl false a restore přeskočil. Fix: draft restore
+     teď vždy přepíše (na page-loadu uživatel ještě nic nenapsal, není
+     co chránit). Pojistka zůstává v restoreStep2Contact, ať draft má
+     přednost nad localStorage contact subsetem.
+
    Změny oproti 0.0.14:
    - Step 2 má teď DVĚ úložiště s různým životním cyklem:
        (a) `formStep2Draft` v sessionStorage — VŠECHNA pole kroku 2
@@ -119,8 +129,10 @@
     if (!data) return;
     Object.keys(data).forEach(function (name) {
       var el = step2Form.querySelector('[name="' + name + '"]');
-      // jen pokud je pole prázdné — uživatel, který si už něco rozepsal, má přednost
-      if (el && !el.value && data[name]) el.value = data[name];
+      // Vždy přepíšeme — na page-loadu uživatel ještě nic nenapsal, není co chránit.
+      // Důležité hlavně pro <select>: default option má často NON-empty value
+      // (např. placeholder s value="question"), takže `!el.value` by tu nepomohl.
+      if (el && data[name]) el.value = data[name];
     });
   }
 
