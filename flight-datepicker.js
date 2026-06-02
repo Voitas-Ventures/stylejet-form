@@ -1,24 +1,34 @@
 /* =========================================================================
-   flight-datepicker.js  v0.0.5  —  datum + čas picker (flatpickr)
+   flight-datepicker.js  v0.0.6  —  datum + čas picker (flatpickr)
                                     s úplnou časovou validací
    -------------------------------------------------------------------------
+   Změny oproti 0.0.5:
+   - `disableMobile: true` — flatpickr nyní používá svůj custom kalendář
+     i na mobilech (iOS / Android). Předtím defaultně fallbackoval na
+     nativní iOS/Android picker, který:
+       * rozbíjel branding (jiný vzhled než desktop)
+       * empty `<input type="datetime-local">` na iOS renderuje jako
+         velký vysoký rámeček, který nepokrýval naše .form_input stylování
+     Důsledek: konzistentní vzhled i chování napříč všemi zařízeními.
+
+   Předchozí změny:
+   - 0.0.5: DOMContentLoaded handler obalen do anonymní funkce
+     (jinak browser volal attachAll(event) → Event nemá querySelectorAll →
+     TypeError). Plus defenzivní pojistka uvnitř attachAll proti netypovým
+     argumentům.
+   - 0.0.3: full validation — žádné minulé časy, return ≥ depart,
+     řetěz mezi úseky (leg N+1 ≥ leg N) s auto-cleanupem neplatných hodnot.
+
    Vyžaduje flatpickr (Site Settings → Custom Code → Head Code):
      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/themes/dark.css">
      <script src="https://cdn.jsdelivr.net/npm/flatpickr@4"></script>
      <script src="https://cdn.jsdelivr.net/npm/flatpickr@4/dist/l10n/cs.js"></script>
-
-   Validační pravidla:
-     1) Žádný úsek nemůže mít datum/čas v minulosti (minDate = teď).
-     2) Datum návratu ≥ datum odletu prvního úseku (v módu Zpáteční).
-     3) Každý další úsek ≥ datum odletu předchozího úseku (multi-leg řetěz).
-   Změna jakékoli hodnoty řetěz přepočítá; navazující neplatné hodnoty se
-   vyčistí, ať uživatel vidí, že je třeba znovu vybrat.
    ========================================================================= */
 (function () {
-  var FORM_SELECTOR  = '[data-step1-form]';
-  var DATE_SELECTOR  = '.flight-date-input';
-  var DEPART_NAME    = 'depart-at';
-  var RETURN_NAME    = 'return-at';
+  var FORM_SELECTOR = '[data-step1-form]';
+  var DATE_SELECTOR = '.flight-date-input';
+  var DEPART_NAME   = 'depart-at';
+  var RETURN_NAME   = 'return-at';
 
   function ready() { return typeof window !== 'undefined' && !!window.flatpickr; }
 
@@ -31,9 +41,10 @@
       time_24hr: true,
       dateFormat: 'd. m. Y H:i',           // 01. 06. 2026 14:30
       locale: (window.flatpickr.l10ns && window.flatpickr.l10ns.cs) || 'default',
-      minDate: new Date(),                  // teď (datum + čas) – pravidlo 1
+      minDate: new Date(),                  // teď (datum + čas) — pravidlo 1
       minuteIncrement: 15,
       allowInput: false,
+      disableMobile: true,                  // v0.0.6: konzistentní flatpickr na všech zařízeních
       onChange: function (selectedDates, dateStr, instance) {
         var form = instance.input.closest(FORM_SELECTOR);
         if (form) recompute(form);
@@ -43,11 +54,11 @@
 
   function attachAll(root) {
     if (!ready()) return;
-    // Defenzivně: když nám sem dolítne např. Event (DOMContentLoaded handler),
-    // root je truthy, ale querySelectorAll na něm není – fallbackni na document.
-    if (root && typeof root.querySelectorAll !== 'function') root = null;
-    (root || document).querySelectorAll(DATE_SELECTOR).forEach(initPicker);
-    var form = (root && root.closest ? root.closest(FORM_SELECTOR) : null)
+    // defenzivní pojistka: pokud nás někdo nesprávně zavolá s Event nebo
+    // jiným non-Node argumentem, zfallbackujeme na document
+    var scope = (root && typeof root.querySelectorAll === 'function') ? root : document;
+    scope.querySelectorAll(DATE_SELECTOR).forEach(initPicker);
+    var form = (scope.closest ? scope.closest(FORM_SELECTOR) : null)
             || document.querySelector(FORM_SELECTOR);
     if (form) recompute(form);
   }
@@ -93,8 +104,6 @@
   }
 
   // ---- event listenery od booking-form.js --------------------------------
-  // Registrujeme okamžitě (ne v DOMContentLoaded), aby případné legAdded
-  // dispatchnuté během restoreState v booking-form.js neproletělo nezachycené.
   document.addEventListener('legAdded', function (e) {
     if (e.detail && e.detail.leg) attachAll(e.detail.leg);
     else attachAll();
