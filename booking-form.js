@@ -1,6 +1,13 @@
 /* =========================================================================
-   booking-form.js  v0.0.13  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.14  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.13:
+   - Auto-save kontaktu kroku 2 (name / email / phone) do localStorage také
+     při každé změně pole, ne jen při Submit-u. Refresh mid-fill v kroku 2
+     teď zachová rozepsaný kontakt stejně, jako to dělá krok 1 pro trasu.
+     (Dříve: persistovalo se až po Submit → před prvním Submit-em byl
+     localStorage prázdný a refresh smazal rozdělaný kontakt.)
+
    Změny oproti 0.0.9 (předchozí deployed verze) — dvě věci najednou:
 
    1) Auto-save kroku 1 do sessionStorage při každé změně (debounce 300 ms).
@@ -69,6 +76,13 @@
   function scheduleSave(form) {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(function () { saveState(form); }, 300);
+  }
+
+  // analogický debounce pro kontakt kroku 2 (jiný timer, ať se nešlapeme)
+  var contactSaveTimer = null;
+  function scheduleContactSave(step2Form) {
+    if (contactSaveTimer) clearTimeout(contactSaveTimer);
+    contactSaveTimer = setTimeout(function () { persistStep2Contact(step2Form); }, 300);
   }
 
   // ---- step 2 kontakt: localStorage persistence napříč session-y --------
@@ -195,7 +209,12 @@
     var inPageMode = !!(step1Wrap && step2Wrap);
 
     // Pre-fill kontaktu z předchozí poptávky (returning customer)
-    if (step2Form) restoreStep2Contact(step2Form);
+    // + auto-save při každé změně, ať refresh mid-fill nesmaže rozepsaný draft
+    if (step2Form) {
+      restoreStep2Contact(step2Form);
+      step2Form.addEventListener('input',  function () { scheduleContactSave(step2Form); });
+      step2Form.addEventListener('change', function () { scheduleContactSave(step2Form); });
+    }
 
     // 1) Obnovit stav kroku 1 (mód, úseky, hodnoty)
     restoreState(form);
