@@ -1,26 +1,29 @@
 /* =========================================================================
-   booking-form.js  v0.0.8  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.9  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.8:
+   - Smart pre-fill při přidání nového úseku: nový úsek dědí
+     `Odkud` = `Kam` předchozího úseku (včetně IATA code) a `Počet cestujících`
+     ze stejného úseku. Uživatel může pre-fill kdykoli přepsat.
+
    Změny oproti 0.0.7:
    - `itinerary-readable` používá `<br>` místo `\n` jako oddělovač řádků,
      aby se v HTML e-mailové notifikaci vykreslovaly jednotlivé úseky
-     na samostatných řádcích (čistý `\n` HTML collapsuje do mezery).
+     na samostatných řádcích.
 
    Změny oproti 0.0.6:
    - Nové hidden pole `itinerary-readable`: lidsky čitelný itinerář pro
-     e-mailovou notifikaci. Generuje se vedle strojového `itinerary` JSONu.
+     e-mailovou notifikaci.
    - Strojové pole `itinerary` už neobsahuje interní `currentStep` —
-     v JSONu zůstává jen tripType / legs / returnAt (čistá data poptávky).
+     v JSONu zůstává jen tripType / legs / returnAt.
 
    Změny oproti 0.0.4 (předchozí deployed verze):
    - One-page režim: pokud jsou step 1 i step 2 wrapper na stejné stránce
      (detekce přes [data-step="1"] a [data-step="2"]), Pokračovat / Zpět už
-     dělají in-page toggle místo redirectu. Stav step 1 je zachován v DOM.
-   - Cross-page fallback: pokud step 2 wrapper na aktuální stránce není
-     (např. step 1 form na homepage hero), Pokračovat uloží stav, označí
-     currentStep='step2' a redirectne na /poptavka, kde se rovnou ukáže krok 2.
-   - Logika dříve v krok-2-custom-code.html je vstřebána sem: populace
-     skrytých polí, Zpět, vyčištění sessionStorage po Submit.
+     dělají in-page toggle místo redirectu.
+   - Cross-page fallback: pokud step 2 wrapper na aktuální stránce není,
+     Pokračovat uloží stav a redirectne na /poptavka.
+   - Logika dříve v krok-2-custom-code.html je vstřebána sem.
    - currentStep ('step1'|'step2') v sessionStorage pro refresh-persistenci.
    ========================================================================= */
 (function () {
@@ -268,8 +271,20 @@
 
   // ---- add / remove leg ---------------------------------------------------
   function addLeg(form) {
+    // zachytíme předchozí poslední úsek PŘED klonováním, ať z něj přebíráme hodnoty
+    var legsBefore = $$('[data-leg]', form);
+    var prev = legsBefore[legsBefore.length - 1];
+
     var clone = cloneLeg(form);
     if (!clone) return;
+
+    // smart pre-fill: nový úsek dědí Kam→Odkud + pax z předchozího
+    if (prev) {
+      setVal(clone, '[name="from"]',      val(prev, '[name="to"]'));
+      setVal(clone, '[name="from-code"]', val(prev, '[name="to-code"]'));
+      setVal(clone, '[name="pax"]',       val(prev, '[name="pax"]'));
+    }
+
     if (window.AirportAutocomplete && window.AirportAutocomplete.attachAll) {
       window.AirportAutocomplete.attachAll();
     }
