@@ -1,12 +1,21 @@
 /* =========================================================================
-   booking-form.js  v0.0.14  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.15  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.14:
+   - Step 2 má teď DVĚ úložiště s různým životním cyklem:
+       (a) `formStep2Draft` v sessionStorage — VŠECHNA pole kroku 2
+           (jméno, e-mail, telefon, typ-služby, letadlo, doplňkové, poznámka).
+           Auto-save při psaní, mizí po Submit-u nebo zavření tabu.
+           Slouží k ochraně rozdělaného draftu před refreshem.
+       (b) `formStep2Contact` v localStorage — JEN kontakt
+           (jméno, e-mail, telefon). Drží napříč session-y, slouží jako
+           returning-customer prefill při příští poptávce.
+     Dříve existovalo jen (b), takže refresh během psaní kroku 2 smazal
+     všechno kromě toho, co už bylo Submit-nuté dříve.
+
    Změny oproti 0.0.13:
-   - Auto-save kontaktu kroku 2 (name / email / phone) do localStorage také
-     při každé změně pole, ne jen při Submit-u. Refresh mid-fill v kroku 2
-     teď zachová rozepsaný kontakt stejně, jako to dělá krok 1 pro trasu.
-     (Dříve: persistovalo se až po Submit → před prvním Submit-em byl
-     localStorage prázdný a refresh smazal rozdělaný kontakt.)
+   - Auto-save kontaktu kroku 2 do localStorage při každé změně pole
+     (ne jen při Submit-u). Refresh mid-fill zachová rozepsaný kontakt.
 
    Změny oproti 0.0.9 (předchozí deployed verze) — dvě věci najednou:
 
@@ -18,9 +27,7 @@
    2) Persistence základního kontaktu (name / email / phone) přes
       localStorage napříč session-y. Při Submit-u uložíme do localStoragu,
       při dalším loadu kroku 2 se prázdná pole prefillnou. Cíleně NEpouštíme
-      do paměti typ-služby / letadlo / doplňkové služby / poznámku —
-      ty jsou trip-specific. GDPR souhlas (checkbox) se vždy
-      re-confirmuje, nepamatujeme ho.
+      do paměti GDPR souhlas (checkbox) — vždy se re-confirmuje.
 
    Změny oproti 0.0.8:
    - Smart pre-fill při přidání nového úseku: nový úsek dědí
@@ -48,14 +55,16 @@
    - currentStep ('step1'|'step2') v sessionStorage pro refresh-persistenci.
    ========================================================================= */
 (function () {
-  var STORAGE_KEY  = 'formStep1';
-  var CONTACT_KEY  = 'formStep2Contact';   // localStorage — persist kontakt mezi poptávkami
-  var POPTAVKA_URL = '/poptavka';  // stránka, kde žije step 2
-  var MAX_LEGS     = 5;
+  var STORAGE_KEY      = 'formStep1';
+  var STEP2_DRAFT_KEY  = 'formStep2Draft';     // sessionStorage — všechna pole kroku 2 pro refresh-protection
+  var CONTACT_KEY      = 'formStep2Contact';   // localStorage — kontakt mezi poptávkami (returning customer)
+  var POPTAVKA_URL     = '/poptavka';          // stránka, kde žije step 2
+  var MAX_LEGS         = 5;
 
-  // jen základní kontakt — typ-sluzby / aircraft / doplnkove-sluzby / note
-  // se vědomě nepamatují (trip-specific)
-  var CONTACT_FIELDS = ['name', 'email', 'phone'];
+  // všechna text/select pole kroku 2 (kromě GDPR checkboxu, který se re-confirmuje)
+  var STEP2_DRAFT_FIELDS = ['name', 'email', 'phone', 'typ-sluzby', 'aircraft', 'doplnkove-sluzby', 'note'];
+  // jen základní kontakt — pro returning-customer prefill napříč session-y
+  var CONTACT_FIELDS     = ['name', 'email', 'phone'];
 
   function $(sel, ctx)  { return (ctx || document).querySelector(sel); }
   function $$(sel, ctx) { return (ctx || document).querySelectorAll(sel); }
@@ -78,14 +87,44 @@
     saveTimer = setTimeout(function () { saveState(form); }, 300);
   }
 
-  // analogický debounce pro kontakt kroku 2 (jiný timer, ať se nešlapeme)
-  var contactSaveTimer = null;
-  function scheduleContactSave(step2Form) {
-    if (contactSaveTimer) clearTimeout(contactSaveTimer);
-    contactSaveTimer = setTimeout(function () { persistStep2Contact(step2Form); }, 300);
+  // analogický debounce pro step 2 — jeden timer, dva zápisy
+  // (sessionStorage draft = vše, localStorage contact = jen kontakt subset)
+  var step2SaveTimer = null;
+  function scheduleStep2Save(step2Form) {
+    if (step2SaveTimer) clearTimeout(step2SaveTimer);
+    step2SaveTimer = setTimeout(function () {
+      persistStep2Draft(step2Form);     // sessionStorage — všechna pole, pro refresh-protection
+      persistStep2Contact(step2Form);   // localStorage — kontakt subset, pro returning customer
+    }, 300);
   }
 
-  // ---- step 2 kontakt: localStorage persistence napříč session-y --------
+  // ---- step 2 draft: sessionStorage (refresh-protection, mizí po Submit-u) ---
+  function persistStep2Draft(step2Form) {
+    if (!step2Form) return;
+    var data = {};
+    STEP2_DRAFT_FIELDS.forEach(function (name) {
+      var el = step2Form.querySelector('[name="' + name + '"]');
+      if (el) data[name] = el.value || '';
+    });
+    try { sessionStorage.setItem(STEP2_DRAFT_KEY, JSON.stringify(data)); } catch (e) {}
+  }
+
+  function restoreStep2Draft(step2Form) {
+    if (!step2Form) return;
+    var raw;
+    try { raw = sessionStorage.getItem(STEP2_DRAFT_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { return; }
+    if (!data) return;
+    Object.keys(data).forEach(function (name) {
+      var el = step2Form.querySelector('[name="' + name + '"]');
+      // jen pokud je pole prázdné — uživatel, který si už něco rozepsal, má přednost
+      if (el && !el.value && data[name]) el.value = data[name];
+    });
+  }
+
+  // ---- step 2 kontakt: localStorage (returning customer, drží napříč session-y) ---
   function persistStep2Contact(step2Form) {
     if (!step2Form) return;
     var data = {};
@@ -208,12 +247,15 @@
     var step2Form  = document.querySelector('#step2-form');
     var inPageMode = !!(step1Wrap && step2Wrap);
 
-    // Pre-fill kontaktu z předchozí poptávky (returning customer)
-    // + auto-save při každé změně, ať refresh mid-fill nesmaže rozepsaný draft
+    // Pre-fill kroku 2:
+    //  1) Draft ze sessionStorage (current-session refresh protection)
+    //  2) Contact subset z localStorage (returning customer, fallback pro prázdná pole)
+    // Auto-save při každé změně do obou úložišť (debounce 300 ms).
     if (step2Form) {
+      restoreStep2Draft(step2Form);
       restoreStep2Contact(step2Form);
-      step2Form.addEventListener('input',  function () { scheduleContactSave(step2Form); });
-      step2Form.addEventListener('change', function () { scheduleContactSave(step2Form); });
+      step2Form.addEventListener('input',  function () { scheduleStep2Save(step2Form); });
+      step2Form.addEventListener('change', function () { scheduleStep2Save(step2Form); });
     }
 
     // 1) Obnovit stav kroku 1 (mód, úseky, hodnoty)
@@ -284,12 +326,14 @@
     });
 
     // 8) Po odeslání kroku 2: uložit kontakt do localStorage (pro příští poptávku)
-    //    + vyčistit sessionStorage (anti-duplicita při refresh)
+    //    + vyčistit sessionStorage draft (anti-duplicita při refresh)
     if (step2Form) {
       step2Form.addEventListener('submit', function () {
         persistStep2Contact(step2Form);    // synchronně, dokud máme hodnoty v DOM
         setTimeout(function () {
-          sessionStorage.removeItem(STORAGE_KEY);
+          sessionStorage.removeItem(STORAGE_KEY);       // step 1 draft
+          sessionStorage.removeItem(STEP2_DRAFT_KEY);   // step 2 draft
+          // localStorage formStep2Contact ZŮSTÁVÁ — pro příští poptávku
         }, 600);
       });
     }
