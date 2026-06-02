@@ -1,6 +1,17 @@
 /* =========================================================================
-   booking-form.js  v0.0.16  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.17  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.16:
+   - Chip-group multi-select pattern: libovolný element s atributem
+     `data-chip-group="<name>"` se zaktivuje jako vizuální multi-select.
+     Jednotlivé chipy uvnitř (`data-chip-value="..."`) se na klik nebo
+     Enter/Space toggle-ují (class `.is-selected`) a skript do skrytého
+     inputu se stejným `name` zapisuje čárkou oddělený string vybraných
+     hodnot. Auto-save (sessionStorage draft) tím pádem funguje bez
+     dalších změn — hidden input je v STEP2_DRAFT_FIELDS jako kterékoli
+     jiné pole. Po refreshi se chipy z hidden hodnoty zpětně visualně
+     synchronizují (`syncChipsFromHidden`).
+
    Změny oproti 0.0.15:
    - Fix: `<select>` elementy se po refreshi neobnovovaly z draftu.
      restoreStep2Draft měl pojistku `!el.value` (nepřepisovat to, co je),
@@ -136,6 +147,63 @@
     });
   }
 
+  // ---- chip-group multi-select (vizuální chipy → skryté pole) -----------
+  // Hledá ve formě [data-chip-group="<name>"] containery; každý chip uvnitř
+  // má [data-chip-value]. Toggle stavu se promítá do hidden inputu se
+  // stejným name jako comma-separated string. Po refreshi syncChipsFromHidden
+  // obnoví vizuální stav podle hodnoty obnovené v restoreStep2Draft.
+  function initChipGroups(form) {
+    if (!form) return;
+    form.querySelectorAll('[data-chip-group]').forEach(function (group) {
+      var name   = group.getAttribute('data-chip-group');
+      var hidden = form.querySelector('[name="' + name + '"]');
+      if (!hidden) return;
+
+      // 1) sync z hidden hodnoty (po restoreStep2Draft už tam může být obsah)
+      syncChipsFromHidden(group, hidden);
+
+      // 2) klik na chip → toggle .is-selected + update hidden
+      group.addEventListener('click', function (e) {
+        var chip = e.target.closest('[data-chip-value]');
+        if (!chip || !group.contains(chip)) return;
+        e.preventDefault();
+        chip.classList.toggle('is-selected');
+        writeHiddenFromChips(group, hidden);
+      });
+
+      // 3) keyboard support: Enter / Space na fokus-ovaném chipu
+      group.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var chip = e.target.closest('[data-chip-value]');
+        if (!chip || !group.contains(chip)) return;
+        e.preventDefault();
+        chip.classList.toggle('is-selected');
+        writeHiddenFromChips(group, hidden);
+      });
+    });
+  }
+
+  function syncChipsFromHidden(group, hidden) {
+    var saved = (hidden.value || '')
+      .split(',')
+      .map(function (s) { return s.trim(); })
+      .filter(Boolean);
+    group.querySelectorAll('[data-chip-value]').forEach(function (chip) {
+      var val = chip.getAttribute('data-chip-value');
+      chip.classList.toggle('is-selected', saved.indexOf(val) !== -1);
+    });
+  }
+
+  function writeHiddenFromChips(group, hidden) {
+    var values = [];
+    group.querySelectorAll('.is-selected[data-chip-value]').forEach(function (chip) {
+      values.push(chip.getAttribute('data-chip-value'));
+    });
+    hidden.value = values.join(', ');
+    // bubble change event → form-level listener spustí scheduleStep2Save
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   // ---- step 2 kontakt: localStorage (returning customer, drží napříč session-y) ---
   function persistStep2Contact(step2Form) {
     if (!step2Form) return;
@@ -262,10 +330,11 @@
     // Pre-fill kroku 2:
     //  1) Draft ze sessionStorage (current-session refresh protection)
     //  2) Contact subset z localStorage (returning customer, fallback pro prázdná pole)
-    // Auto-save při každé změně do obou úložišť (debounce 300 ms).
+    //  3) Sync vizuálního stavu chip-groupů ze skrytých polí, pak listenery
     if (step2Form) {
       restoreStep2Draft(step2Form);
       restoreStep2Contact(step2Form);
+      initChipGroups(step2Form);
       step2Form.addEventListener('input',  function () { scheduleStep2Save(step2Form); });
       step2Form.addEventListener('change', function () { scheduleStep2Save(step2Form); });
     }
