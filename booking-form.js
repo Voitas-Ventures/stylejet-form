@@ -1,6 +1,20 @@
 /* =========================================================================
-   booking-form.js  v0.0.9  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.13  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.9 (předchozí deployed verze) — dvě věci najednou:
+
+   1) Auto-save kroku 1 do sessionStorage při každé změně (debounce 300 ms).
+      Dosud se stav ukládal až při kliku na Pokračovat — refresh mid-fill
+      znamenal ztrátu rozdělaných dat a fallback na defaulty. Teď přežije
+      refresh, navigaci v rámci karty i prostoje.
+
+   2) Persistence základního kontaktu (name / email / phone) přes
+      localStorage napříč session-y. Při Submit-u uložíme do localStoragu,
+      při dalším loadu kroku 2 se prázdná pole prefillnou. Cíleně NEpouštíme
+      do paměti typ-služby / letadlo / doplňkové služby / poznámku —
+      ty jsou trip-specific. GDPR souhlas (checkbox) se vždy
+      re-confirmuje, nepamatujeme ho.
+
    Změny oproti 0.0.8:
    - Smart pre-fill při přidání nového úseku: nový úsek dědí
      `Odkud` = `Kam` předchozího úseku (včetně IATA code) a `Počet cestujících`
@@ -28,8 +42,13 @@
    ========================================================================= */
 (function () {
   var STORAGE_KEY  = 'formStep1';
+  var CONTACT_KEY  = 'formStep2Contact';   // localStorage — persist kontakt mezi poptávkami
   var POPTAVKA_URL = '/poptavka';  // stránka, kde žije step 2
   var MAX_LEGS     = 5;
+
+  // jen základní kontakt — typ-sluzby / aircraft / doplnkove-sluzby / note
+  // se vědomě nepamatují (trip-specific)
+  var CONTACT_FIELDS = ['name', 'email', 'phone'];
 
   function $(sel, ctx)  { return (ctx || document).querySelector(sel); }
   function $$(sel, ctx) { return (ctx || document).querySelectorAll(sel); }
@@ -41,6 +60,42 @@
       detail: Object.assign({ form: form }, detail || {}),
       bubbles: true,
     }));
+  }
+
+  // ---- auto-save (debounced) ---------------------------------------------
+  // saveState je drahá jen mírně, ale stejně debouncujeme, ať při psaní do
+  // pole nevoláme localStorage write na každý keystroke.
+  var saveTimer = null;
+  function scheduleSave(form) {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { saveState(form); }, 300);
+  }
+
+  // ---- step 2 kontakt: localStorage persistence napříč session-y --------
+  function persistStep2Contact(step2Form) {
+    if (!step2Form) return;
+    var data = {};
+    CONTACT_FIELDS.forEach(function (name) {
+      var el = step2Form.querySelector('[name="' + name + '"]');
+      if (el && el.value) data[name] = el.value;
+    });
+    try { localStorage.setItem(CONTACT_KEY, JSON.stringify(data)); } catch (e) {}
+  }
+
+  function restoreStep2Contact(step2Form) {
+    if (!step2Form) return;
+    var raw;
+    try { raw = localStorage.getItem(CONTACT_KEY); } catch (e) { return; }
+    if (!raw) return;
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { return; }
+    if (!data) return;
+    Object.keys(data).forEach(function (name) {
+      var el = step2Form.querySelector('[name="' + name + '"]');
+      // jen pokud je pole prázdné — uživatel, který si už něco rozepsal
+      // (např. při návratu Zpět z error stavu) má přednost
+      if (el && !el.value) el.value = data[name];
+    });
   }
 
   // ---- currentStep helper (uložen vedle tripType/legs/returnAt) ----------
@@ -139,6 +194,9 @@
     var step2Form  = document.querySelector('#step2-form');
     var inPageMode = !!(step1Wrap && step2Wrap);
 
+    // Pre-fill kontaktu z předchozí poptávky (returning customer)
+    if (step2Form) restoreStep2Contact(step2Form);
+
     // 1) Obnovit stav kroku 1 (mód, úseky, hodnoty)
     restoreState(form);
     syncMode(form);
@@ -206,14 +264,27 @@
       }
     });
 
-    // 8) Po odeslání kroku 2: vyčistit sessionStorage (anti-duplicita při refresh)
+    // 8) Po odeslání kroku 2: uložit kontakt do localStorage (pro příští poptávku)
+    //    + vyčistit sessionStorage (anti-duplicita při refresh)
     if (step2Form) {
       step2Form.addEventListener('submit', function () {
+        persistStep2Contact(step2Form);    // synchronně, dokud máme hodnoty v DOM
         setTimeout(function () {
           sessionStorage.removeItem(STORAGE_KEY);
         }, 600);
       });
     }
+
+    // 9) Auto-save kroku 1 při každé změně (debounce 300 ms)
+    //    Pokrývá: psaní do inputů, výběr v autocomplete, flatpickr change,
+    //    radio toggle Jednosměrný/Zpáteční.
+    form.addEventListener('input',  function () { scheduleSave(form); });
+    form.addEventListener('change', function () { scheduleSave(form); });
+    //    Strukturální změny (add/remove leg, mode switch) ukládáme okamžitě
+    //    bez debounce, ať refresh hned po kliku zachová stav.
+    form.addEventListener('legAdded',         function () { saveState(form); });
+    form.addEventListener('legRemoved',       function () { saveState(form); });
+    form.addEventListener('tripTypeChanged',  function () { saveState(form); });
   }
 
   // ---- režim ---------------------------------------------------------------
