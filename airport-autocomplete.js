@@ -5,7 +5,7 @@
    ⚡ PŘECHOD NA AVINODE = upravíš JEN funkci fetchAirports() níže.
    ========================================================================= */
 (function () {
-  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@0.0.3/airports.json';
+  var AIRPORTS_URL = 'https://cdn.jsdelivr.net/gh/VikyExp/stylejet@0.0.12/airports.json';
   var MAX_RESULTS  = 8;
   var MIN_CHARS    = 2;
 
