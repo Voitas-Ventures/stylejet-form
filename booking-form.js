@@ -1,16 +1,23 @@
 /* =========================================================================
-   booking-form.js  v0.0.18  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.19  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.18:
+   - Fix: Zpět tlačítko v kroku 2 schovalo krok 2, ale neukázalo krok 1.
+     Dva fixy najednou:
+       (a) Document-level Zpět listener teď hledá step1Wrap přes parent
+           step2Wrapu (`step2Wrap.parentElement.querySelector('[data-step="1"]')`),
+           ne globálně. Když je na stránce víc `[data-step="1"]` elementů
+           (např. /poptavka má footer se zkopírovaným step-1 formem z homepage),
+           globální query selectoval špatný element.
+       (b) showStep teď nastavuje explicitně `display: 'flex'` při zobrazení
+           kroku (předtím `display = ''`). Pokud by class CSS některého
+           wrapperu měl default `display: none` (z Webflow Style panelu nebo
+           CSS overridu), vyčištění inline stylu by ten default odhalilo
+           místo schovat. Explicit flex hodnota přebije všechno; oba wrappery
+           jsou w-layout-vflex = flex, takže semanticky sedí.
+
    Změny oproti 0.0.17:
-   - Multi-form support: skript najde a inicializuje VŠECHNY `[data-step1-form]`
-     na stránce (předtím jen první přes querySelector). Hero + footer entry
-     pointy na homepage teď fungují nezávisle — každý form má vlastní DOM stav,
-     vlastní listenery, vlastní debounce timer. SessionStorage zůstává sdílená
-     (Model A): kdo zapíše naposled vyhraje. Refactor: per-form logika vyňata
-     do `initStep1Form()`, `init()` teď drží jen page-level setup (step 2,
-     document-level Zpět button) a iteruje nad všemi step-1 formy.
-   - `scheduleSave` používá per-form timer (`form._saveTimer`) místo sdíleného,
-     ať debounce mezi dvěma formuláři na téže stránce neperou vzájemně.
+   - Multi-form support: skript najde a inicializuje VŠECHNY `[data-step1-form]`.
 
    Změny oproti 0.0.16:
    - Chip-group multi-select pattern.
@@ -247,13 +254,17 @@
   }
 
   // ---- step toggle (in-page mode) ----------------------------------------
+  // POZNÁMKA: 'flex' (ne '') je úmyslné — oba wrappery jsou w-layout-vflex,
+  // takže layoutově sedí flex. Explicit hodnota navíc přebije případný
+  // class CSS s `display: none` (Webflow Style panel, media query, …),
+  // kde by `display = ''` fallbacknulo na hidden default.
   function showStep(step1Wrap, step2Wrap, n) {
     if (!step1Wrap || !step2Wrap) return;
     if (n === 2) {
       step1Wrap.style.display = 'none';
-      step2Wrap.style.display = '';
+      step2Wrap.style.display = 'flex';
     } else {
-      step1Wrap.style.display = '';
+      step1Wrap.style.display = 'flex';
       step2Wrap.style.display = 'none';
     }
   }
@@ -349,8 +360,15 @@
       e.preventDefault();
       writeCurrentStep('step1');
       if (step2Wrap) {
-        // in-page mode: schovat step 2, ukázat step 1 (první step-1 wrapper na stránce)
-        var step1Wrap = document.querySelector('[data-step="1"]');
+        // in-page mode: schovat step 2, ukázat odpovídající step 1.
+        // KLÍČOVÉ: hledáme step 1 v parentu step 2 wrapperu, ne globálně.
+        // Když je na stránce víc `[data-step="1"]` (footer hero/footer entry
+        // pointů z homepage), globální `document.querySelector` by mohl najít
+        // špatný element. Parent-scoped query zajistí, že najdeme step 1,
+        // který je opravdu párovaný se step 2 v tom samém containeru.
+        var step1Wrap = step2Wrap.parentElement
+          ? step2Wrap.parentElement.querySelector('[data-step="1"]')
+          : null;
         if (step1Wrap) {
           showStep(step1Wrap, step2Wrap, 1);
           scrollToWrap(step1Wrap);
