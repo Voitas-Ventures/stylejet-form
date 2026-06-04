@@ -1,16 +1,19 @@
 /* =========================================================================
-   booking-form.js  v0.0.17  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.18  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.17:
+   - Multi-form support: skript najde a inicializuje VŠECHNY `[data-step1-form]`
+     na stránce (předtím jen první přes querySelector). Hero + footer entry
+     pointy na homepage teď fungují nezávisle — každý form má vlastní DOM stav,
+     vlastní listenery, vlastní debounce timer. SessionStorage zůstává sdílená
+     (Model A): kdo zapíše naposled vyhraje. Refactor: per-form logika vyňata
+     do `initStep1Form()`, `init()` teď drží jen page-level setup (step 2,
+     document-level Zpět button) a iteruje nad všemi step-1 formy.
+   - `scheduleSave` používá per-form timer (`form._saveTimer`) místo sdíleného,
+     ať debounce mezi dvěma formuláři na téže stránce neperou vzájemně.
+
    Změny oproti 0.0.16:
-   - Chip-group multi-select pattern: libovolný element s atributem
-     `data-chip-group="<name>"` se zaktivuje jako vizuální multi-select.
-     Jednotlivé chipy uvnitř (`data-chip-value="..."`) se na klik nebo
-     Enter/Space toggle-ují (class `.is-selected`) a skript do skrytého
-     inputu se stejným `name` zapisuje čárkou oddělený string vybraných
-     hodnot. Auto-save (sessionStorage draft) tím pádem funguje bez
-     dalších změn — hidden input je v STEP2_DRAFT_FIELDS jako kterékoli
-     jiné pole. Po refreshi se chipy z hidden hodnoty zpětně visualně
-     synchronizují (`syncChipsFromHidden`).
+   - Chip-group multi-select pattern.
 
    Změny oproti 0.0.15:
    - Fix: `<select>` elementy se po refreshi neobnovovaly z draftu.
@@ -100,12 +103,12 @@
   }
 
   // ---- auto-save (debounced) ---------------------------------------------
-  // saveState je drahá jen mírně, ale stejně debouncujeme, ať při psaní do
-  // pole nevoláme localStorage write na každý keystroke.
-  var saveTimer = null;
+  // Timer drží na samotném form elementu (form._saveTimer), aby dva formuláře
+  // na téže stránce (např. hero + footer na homepage) neperaly o jediný
+  // sdílený timer a netriggrovaly si vzájemné cancelace debouncu.
   function scheduleSave(form) {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(function () { saveState(form); }, 300);
+    if (form._saveTimer) clearTimeout(form._saveTimer);
+    form._saveTimer = setTimeout(function () { saveState(form); }, 300);
   }
 
   // analogický debounce pro step 2 — jeden timer, dva zápisy
@@ -314,44 +317,80 @@
   else document.addEventListener('DOMContentLoaded', init);
 
   function init() {
-    var form = $('[data-step1-form]');
-    if (!form) return;
+    // === Page-level setup (runs once per page load) ============================
 
-    var nextBtn = $('[data-step1-next]', form);
-    var addBtn  = $('[data-add-leg]', form);
-    if (!nextBtn) return;
+    var step2Wrap = document.querySelector('[data-step="2"]');
+    var step2Form = document.querySelector('#step2-form');
 
-    // Detekce in-page módu
-    var step1Wrap  = form.closest('[data-step="1"]');
-    var step2Wrap  = document.querySelector('[data-step="2"]');
-    var step2Form  = document.querySelector('#step2-form');
-    var inPageMode = !!(step1Wrap && step2Wrap);
-
-    // Pre-fill kroku 2:
-    //  1) Draft ze sessionStorage (current-session refresh protection)
-    //  2) Contact subset z localStorage (returning customer, fallback pro prázdná pole)
-    //  3) Sync vizuálního stavu chip-groupů ze skrytých polí, pak listenery
+    // Krok 2: pre-fill (draft + contact + chips), auto-save listenery, submit handler.
+    // Vše se týká té jedné step-2 instance na stránce, ne per step-1 form.
     if (step2Form) {
       restoreStep2Draft(step2Form);
       restoreStep2Contact(step2Form);
       initChipGroups(step2Form);
       step2Form.addEventListener('input',  function () { scheduleStep2Save(step2Form); });
       step2Form.addEventListener('change', function () { scheduleStep2Save(step2Form); });
+      step2Form.addEventListener('submit', function () {
+        persistStep2Contact(step2Form);                // synchronně, dokud máme hodnoty v DOM
+        setTimeout(function () {
+          sessionStorage.removeItem(STORAGE_KEY);       // step 1 draft
+          sessionStorage.removeItem(STEP2_DRAFT_KEY);   // step 2 draft
+          // localStorage formStep2Contact ZŮSTÁVÁ — pro příští poptávku
+        }, 600);
+      });
     }
 
-    // 1) Obnovit stav kroku 1 (mód, úseky, hodnoty)
+    // Zpět tlačítko žije uvnitř step-2 formu (nebo na něj může mířit odkud­koli).
+    // Listener na document = jedna registrace pokryje všechna [data-step1-back]
+    // tlačítka napříč stránkou.
+    document.addEventListener('click', function (e) {
+      var back = e.target.closest('[data-step1-back]');
+      if (!back) return;
+      e.preventDefault();
+      writeCurrentStep('step1');
+      if (step2Wrap) {
+        // in-page mode: schovat step 2, ukázat step 1 (první step-1 wrapper na stránce)
+        var step1Wrap = document.querySelector('[data-step="1"]');
+        if (step1Wrap) {
+          showStep(step1Wrap, step2Wrap, 1);
+          scrollToWrap(step1Wrap);
+        }
+      } else {
+        // cross-page: vrátit na stránku s krokem 1 (= /poptavka)
+        window.location.href = POPTAVKA_URL;
+      }
+    });
+
+    // === Per-form setup (runs ONCE per step 1 form on page) ====================
+    // Na homepage bývá víc forem (hero + footer); na /poptavka jen jeden.
+    document.querySelectorAll('[data-step1-form]').forEach(function (form) {
+      initStep1Form(form, step2Wrap, step2Form);
+    });
+  }
+
+  function initStep1Form(form, step2Wrap, step2Form) {
+    var nextBtn = form.querySelector('[data-step1-next]');
+    var addBtn  = form.querySelector('[data-add-leg]');
+    if (!nextBtn) return;
+
+    var step1Wrap  = form.closest('[data-step="1"]');
+    var inPageMode = !!(step1Wrap && step2Wrap);
+
+    // 1) Obnovit stav (mód, úseky, hodnoty) ze sessionStorage do TOHOTO formu.
+    //    Když je na stránce víc formů, oba dostanou stejný obsah ze sdílené storage.
     restoreState(form);
     syncMode(form);
 
-    // 2) V in-page módu: rozhodnout, který krok ukázat při loadu
+    // 2) In-page režim: rozhodnout, který krok zobrazit při loadu.
+    //    Cross-page formy (hero, footer) tento blok přeskočí — step 2 wrapper neexistuje.
     if (inPageMode) {
       populateStep2Hidden(step2Form);
       var cs = readState().currentStep;
       showStep(step1Wrap, step2Wrap, cs === 'step2' ? 2 : 1);
     }
 
-    // 3) Změna režimu
-    $$('input[type="radio"][name="trip-type"]', form).forEach(function (r) {
+    // 3) Změna režimu Jednosměrný/Zpáteční (scoped na tento form)
+    form.querySelectorAll('input[type="radio"][name="trip-type"]').forEach(function (r) {
       r.addEventListener('change', function () { onModeChange(form); });
     });
 
@@ -361,7 +400,7 @@
       addLeg(form);
     });
 
-    // 5) Delegace: Odstranit úsek + swap (kvůli dynamicky přidaným úsekům)
+    // 5) Delegace pro dynamické úseky (Odstranit + swap), scoped na tento form
     form.addEventListener('click', function (e) {
       var remove = e.target.closest('[data-remove-leg]');
       if (remove && form.contains(remove)) {
@@ -376,7 +415,7 @@
       }
     });
 
-    // 6) Pokračovat
+    // 6) Pokračovat — in-page toggle nebo cross-page redirect
     nextBtn.addEventListener('click', function (e) {
       e.preventDefault();
       if (!form.reportValidity()) return;
@@ -391,41 +430,9 @@
       }
     });
 
-    // 7) Zpět (tlačítko žije v step-2 formu → listen na document)
-    document.addEventListener('click', function (e) {
-      var back = e.target.closest('[data-step1-back]');
-      if (!back) return;
-      e.preventDefault();
-      writeCurrentStep('step1');
-      if (inPageMode) {
-        showStep(step1Wrap, step2Wrap, 1);
-        scrollToWrap(step1Wrap);
-      } else {
-        // cross-page: vrátit na stránku s krokem 1 (= /poptavka)
-        window.location.href = POPTAVKA_URL;
-      }
-    });
-
-    // 8) Po odeslání kroku 2: uložit kontakt do localStorage (pro příští poptávku)
-    //    + vyčistit sessionStorage draft (anti-duplicita při refresh)
-    if (step2Form) {
-      step2Form.addEventListener('submit', function () {
-        persistStep2Contact(step2Form);    // synchronně, dokud máme hodnoty v DOM
-        setTimeout(function () {
-          sessionStorage.removeItem(STORAGE_KEY);       // step 1 draft
-          sessionStorage.removeItem(STEP2_DRAFT_KEY);   // step 2 draft
-          // localStorage formStep2Contact ZŮSTÁVÁ — pro příští poptávku
-        }, 600);
-      });
-    }
-
-    // 9) Auto-save kroku 1 při každé změně (debounce 300 ms)
-    //    Pokrývá: psaní do inputů, výběr v autocomplete, flatpickr change,
-    //    radio toggle Jednosměrný/Zpáteční.
+    // 7) Auto-save (debounce 300 ms na input/change, okamžitě na strukturální změny)
     form.addEventListener('input',  function () { scheduleSave(form); });
     form.addEventListener('change', function () { scheduleSave(form); });
-    //    Strukturální změny (add/remove leg, mode switch) ukládáme okamžitě
-    //    bez debounce, ať refresh hned po kliku zachová stav.
     form.addEventListener('legAdded',         function () { saveState(form); });
     form.addEventListener('legRemoved',       function () { saveState(form); });
     form.addEventListener('tripTypeChanged',  function () { saveState(form); });
