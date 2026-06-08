@@ -1,16 +1,20 @@
 /* =========================================================================
-   booking-form.js  v0.0.20  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.21  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.20:
+   - Klik "+ Přidat úsek" v Zpátečním módu teď nový úsek vyplní jako
+     "návratovou trasu": převrátí from/to z úseku 1 do to/from úseku 2,
+     a do depart-at úseku 2 zkopíruje původní hodnotu return-at z úseku 1.
+     Smart pre-fill v addLeg už zajišťoval pax + from = předchozí to;
+     v0.0.21 dotahuje to + to-code (převrácení) a depart-at (z return-at).
+     UX: zákazník měl Praha→Londýn + návrat 15. 6., klik → Praha→Londýn
+     → Londýn→Praha (15. 6.), s automatickým pax & IATA codes. Pokud chce
+     trasu úseku 2 změnit, snadno přepíše.
+     Pro datum použito flatpickr.setDate() (ne jen .value=), ať si
+     flatpickr datum vzal i do interního stavu pro kalendář popup.
+
    Změny oproti 0.0.19:
-   - Tlačítko "+ Přidat úsek" je nyní viditelné i v Zpátečním módu (předtím
-     bylo vidět jen v Jednosměrném). Klik v Zpátečním režimu funguje jako
-     "convert to multi-leg" zkratka: skript přepne mód na Jednosměrný
-     (čímž vyčistí return-at a zruší vizuální return-wrap), pak hned přidá
-     jeden další úsek. V Jednosměrném zůstává chování beze změny — klik
-     prostě přidá další úsek.
-     Důsledek pro UX: zákazník v Zpátečním režimu po kliku na "+ Přidat úsek"
-     nemusí ručně přepínat radio toggle, pokud zjistí, že chce
-     multi-stopovou trasu místo round-trip.
+   - Tlačítko "+ Přidat úsek" viditelné i v Zpátečním módu.
 
    Změny oproti 0.0.18:
    - Fix Zpět tlačítka v step 2 (dva defenzivní fixy: scoped query +
@@ -413,21 +417,59 @@
     });
 
     // 4) Přidat úsek
-    //    V Jednosměrném: prostě přidat další úsek.
-    //    V Zpátečním: nejdřív přepnout na Jednosměrný (čímž vyčistíme return-at
-    //    a schováme return-wrap přes onModeChange), pak teprve addLeg.
+    //    V Jednosměrném: prostě přidat další úsek (addLeg už dělá smart pre-fill
+    //    from = leg(n-1).to + pax).
+    //    V Zpátečním: zachytíme leg 1.from/from-code + return-at PŘED přepnutím
+    //    módu (onModeChange totiž return-at vyčistí). Po addLeg dotáhneme:
+    //      - to + to-code = saved from (převrácená trasa)
+    //      - depart-at    = saved return-at (přes flatpickr.setDate API,
+    //                        aby si flatpickr datum vzal i do interního stavu)
     if (addBtn) addBtn.addEventListener('click', function (e) {
       e.preventDefault();
-      if (getMode(form) === 'return') {
+
+      var wasReturn = getMode(form) === 'return';
+      var savedFrom = '', savedFromCode = '', savedReturnAt = '';
+
+      if (wasReturn) {
+        var leg1 = $('[data-leg]', form);
+        if (leg1) {
+          savedFrom     = val(leg1, '[name="from"]');
+          savedFromCode = val(leg1, '[name="from-code"]');
+        }
+        savedReturnAt = val(form, '[name="return-at"]');
+
         var oneWayRadio = form.querySelector(
           'input[type="radio"][name="trip-type"][value="oneway"]'
         );
         if (oneWayRadio) {
-          oneWayRadio.checked = true;       // programové = nefire-uje DOM change event
-          onModeChange(form);                // ručně spustíme mode-switch logiku
+          oneWayRadio.checked = true;     // programové = nefire-uje DOM change event
+          onModeChange(form);              // ručně spustíme mode-switch logiku
         }
       }
+
       addLeg(form);
+
+      if (wasReturn) {
+        var allLegs = $$('[data-leg]', form);
+        var newLeg  = allLegs[allLegs.length - 1];
+        if (newLeg) {
+          if (savedFrom)     setVal(newLeg, '[name="to"]',      savedFrom);
+          if (savedFromCode) setVal(newLeg, '[name="to-code"]', savedFromCode);
+          if (savedReturnAt) {
+            var depInp = newLeg.querySelector('[name="depart-at"]');
+            if (depInp && depInp._flatpickr) {
+              // setDate(value, triggerChange=true) → flatpickr přepočítá vnitřní
+              // selectedDates a spustí onChange → recompute v chain validaci.
+              depInp._flatpickr.setDate(savedReturnAt, true);
+            } else if (depInp) {
+              // fallback: pokud by flatpickr ještě nebyl attachnutý (timing edge),
+              // alespoň zapíšeme do .value, flatpickr ho při příštím openu načte.
+              depInp.value = savedReturnAt;
+            }
+          }
+          saveState(form);   // jistota: zachytit ve storage upravený stav po manuálním pre-fillu
+        }
+      }
     });
 
     // 5) Delegace pro dynamické úseky (Odstranit + swap), scoped na tento form
