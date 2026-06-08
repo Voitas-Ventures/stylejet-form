@@ -1,17 +1,24 @@
 /* =========================================================================
-   booking-form.js  v0.0.21  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.22  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.21:
+   - Pole "Jméno a příjmení" rozděleno na DVA: `first-name` (Jméno) a
+     `last-name` (Příjmení). Konstanty CONTACT_FIELDS a STEP2_DRAFT_FIELDS
+     aktualizovány: 'name' nahrazeno dvojicí 'first-name'/'last-name'.
+     Důvody: lepší data hygiene v notifikačních e-mailech (operátoři dostanou
+     jméno a příjmení odděleně, dobré pro CRM zápis) + lepší autofill v
+     prohlížečích (Chrome/Safari rozpoznají `first-name`/`last-name`
+     a nabídnou hodnoty z Contacts/profilu).
+
+     Backward-compat migrace v restoreStep2Contact: pokud má returning
+     customer v localStorage starý klíč `name` (z předchozí verze formu),
+     na page-loadu se rozdělí podle první mezery a vyplní obě nová pole.
+     Starý klíč `name` zůstane v localStorage do prvního auto-save, který
+     ho přepíše novým formátem (persistStep2Contact dělá celý overwrite).
+
    Změny oproti 0.0.20:
-   - Klik "+ Přidat úsek" v Zpátečním módu teď nový úsek vyplní jako
-     "návratovou trasu": převrátí from/to z úseku 1 do to/from úseku 2,
-     a do depart-at úseku 2 zkopíruje původní hodnotu return-at z úseku 1.
-     Smart pre-fill v addLeg už zajišťoval pax + from = předchozí to;
-     v0.0.21 dotahuje to + to-code (převrácení) a depart-at (z return-at).
-     UX: zákazník měl Praha→Londýn + návrat 15. 6., klik → Praha→Londýn
-     → Londýn→Praha (15. 6.), s automatickým pax & IATA codes. Pokud chce
-     trasu úseku 2 změnit, snadno přepíše.
-     Pro datum použito flatpickr.setDate() (ne jen .value=), ať si
-     flatpickr datum vzal i do interního stavu pro kalendář popup.
+   - Klik "+ Přidat úsek" v Zpátečním nyní převrátí trasu úseku 1 do úseku 2
+     a do depart-at zkopíruje původní return-at.
 
    Změny oproti 0.0.19:
    - Tlačítko "+ Přidat úsek" viditelné i v Zpátečním módu.
@@ -97,9 +104,9 @@
   var MAX_LEGS         = 5;
 
   // všechna text/select pole kroku 2 (kromě GDPR checkboxu, který se re-confirmuje)
-  var STEP2_DRAFT_FIELDS = ['name', 'email', 'phone', 'typ-sluzby', 'aircraft', 'doplnkove-sluzby', 'note'];
+  var STEP2_DRAFT_FIELDS = ['first-name', 'last-name', 'email', 'phone', 'typ-sluzby', 'aircraft', 'doplnkove-sluzby', 'note'];
   // jen základní kontakt — pro returning-customer prefill napříč session-y
-  var CONTACT_FIELDS     = ['name', 'email', 'phone'];
+  var CONTACT_FIELDS     = ['first-name', 'last-name', 'email', 'phone'];
 
   function $(sel, ctx)  { return (ctx || document).querySelector(sel); }
   function $$(sel, ctx) { return (ctx || document).querySelectorAll(sel); }
@@ -237,6 +244,21 @@
     var data;
     try { data = JSON.parse(raw); } catch (e) { return; }
     if (!data) return;
+
+    // v0.0.22 migrace: starý formát měl `name` (jedno pole). Nový formát má
+    // `first-name` a `last-name`. Pokud máme starý klíč a nemáme nový,
+    // rozdělíme přes první mezeru. Po prvním auto-save persistStep2Contact
+    // přepíše celý localStorage záznam novým formátem.
+    if (data.name && !data['first-name'] && !data['last-name']) {
+      var parts = String(data.name).trim().split(/\s+/);
+      if (parts.length >= 2) {
+        data['first-name'] = parts[0];
+        data['last-name']  = parts.slice(1).join(' ');
+      } else if (parts.length === 1 && parts[0]) {
+        data['first-name'] = parts[0];
+      }
+    }
+
     Object.keys(data).forEach(function (name) {
       var el = step2Form.querySelector('[name="' + name + '"]');
       // jen pokud je pole prázdné — uživatel, který si už něco rozepsal
