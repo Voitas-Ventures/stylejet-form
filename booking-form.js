@@ -1,20 +1,20 @@
 /* =========================================================================
-   booking-form.js  v0.0.19  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.20  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
+   Změny oproti 0.0.19:
+   - Tlačítko "+ Přidat úsek" je nyní viditelné i v Zpátečním módu (předtím
+     bylo vidět jen v Jednosměrném). Klik v Zpátečním režimu funguje jako
+     "convert to multi-leg" zkratka: skript přepne mód na Jednosměrný
+     (čímž vyčistí return-at a zruší vizuální return-wrap), pak hned přidá
+     jeden další úsek. V Jednosměrném zůstává chování beze změny — klik
+     prostě přidá další úsek.
+     Důsledek pro UX: zákazník v Zpátečním režimu po kliku na "+ Přidat úsek"
+     nemusí ručně přepínat radio toggle, pokud zjistí, že chce
+     multi-stopovou trasu místo round-trip.
+
    Změny oproti 0.0.18:
-   - Fix: Zpět tlačítko v kroku 2 schovalo krok 2, ale neukázalo krok 1.
-     Dva fixy najednou:
-       (a) Document-level Zpět listener teď hledá step1Wrap přes parent
-           step2Wrapu (`step2Wrap.parentElement.querySelector('[data-step="1"]')`),
-           ne globálně. Když je na stránce víc `[data-step="1"]` elementů
-           (např. /poptavka má footer se zkopírovaným step-1 formem z homepage),
-           globální query selectoval špatný element.
-       (b) showStep teď nastavuje explicitně `display: 'flex'` při zobrazení
-           kroku (předtím `display = ''`). Pokud by class CSS některého
-           wrapperu měl default `display: none` (z Webflow Style panelu nebo
-           CSS overridu), vyčištění inline stylu by ten default odhalilo
-           místo schovat. Explicit flex hodnota přebije všechno; oba wrappery
-           jsou w-layout-vflex = flex, takže semanticky sedí.
+   - Fix Zpět tlačítka v step 2 (dva defenzivní fixy: scoped query +
+     explicit display:flex).
 
    Změny oproti 0.0.17:
    - Multi-form support: skript najde a inicializuje VŠECHNY `[data-step1-form]`.
@@ -413,8 +413,20 @@
     });
 
     // 4) Přidat úsek
+    //    V Jednosměrném: prostě přidat další úsek.
+    //    V Zpátečním: nejdřív přepnout na Jednosměrný (čímž vyčistíme return-at
+    //    a schováme return-wrap přes onModeChange), pak teprve addLeg.
     if (addBtn) addBtn.addEventListener('click', function (e) {
       e.preventDefault();
+      if (getMode(form) === 'return') {
+        var oneWayRadio = form.querySelector(
+          'input[type="radio"][name="trip-type"][value="oneway"]'
+        );
+        if (oneWayRadio) {
+          oneWayRadio.checked = true;       // programové = nefire-uje DOM change event
+          onModeChange(form);                // ručně spustíme mode-switch logiku
+        }
+      }
       addLeg(form);
     });
 
@@ -477,7 +489,10 @@
       el.style.display = isReturn ? '' : 'none';
     });
     var addBtn = $('[data-add-leg]', form);
-    if (addBtn) addBtn.style.display = (!isReturn && legs.length < MAX_LEGS) ? '' : 'none';
+    // v0.0.20: addBtn viditelný v obou módech. V Zpátečním je tam vždy 1 úsek,
+    // takže limit < MAX_LEGS je automaticky splněn. Klik v Zpátečním je
+    // ošetřen v initStep1Form: nejdřív přepne na Jednosměrný, pak přidá úsek.
+    if (addBtn) addBtn.style.display = (legs.length < MAX_LEGS) ? '' : 'none';
     legs.forEach(function (leg, i) {
       $$('[data-remove-leg]', leg).forEach(function (btn) {
         btn.style.display = (i === 0) ? 'none' : '';
