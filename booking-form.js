@@ -1,20 +1,20 @@
 /* =========================================================================
-   booking-form.js  v0.0.22  —  multi-leg poptávkový formulář
+   booking-form.js  v0.0.23  —  multi-leg poptávkový formulář
    -------------------------------------------------------------------------
-   Změny oproti 0.0.21:
-   - Pole "Jméno a příjmení" rozděleno na DVA: `first-name` (Jméno) a
-     `last-name` (Příjmení). Konstanty CONTACT_FIELDS a STEP2_DRAFT_FIELDS
-     aktualizovány: 'name' nahrazeno dvojicí 'first-name'/'last-name'.
-     Důvody: lepší data hygiene v notifikačních e-mailech (operátoři dostanou
-     jméno a příjmení odděleně, dobré pro CRM zápis) + lepší autofill v
-     prohlížečích (Chrome/Safari rozpoznají `first-name`/`last-name`
-     a nabídnou hodnoty z Contacts/profilu).
+   Změny oproti 0.0.22:
+   - Default-radio fallback sjednocen do `initStep1Form`. Předtím
+     samostatný snippet v Site Footer Code nastavoval "Zpáteční" jako
+     default, ale ten byl psaný pro JEDEN form (`document.querySelector`)
+     a na homepage s dvěma forms aktivoval jen první (hero). Footer form
+     zůstal bez výchozího výběru. Teď je logika per-form přímo v init —
+     každý form si na startu zkontroluje, jestli má nějaký radio checked,
+     a pokud ne, nastaví `value="return"` jako default. restoreState ho
+     pak může přepsat, pokud má v sessionStorage uložené něco jiného.
+     Standalone snippet v Site Footer Code je nyní nadbytečný → klidně
+     ho můžeš odstranit (instrukce v deploy postupu).
 
-     Backward-compat migrace v restoreStep2Contact: pokud má returning
-     customer v localStorage starý klíč `name` (z předchozí verze formu),
-     na page-loadu se rozdělí podle první mezery a vyplní obě nová pole.
-     Starý klíč `name` zůstane v localStorage do prvního auto-save, který
-     ho přepíše novým formátem (persistStep2Contact dělá celý overwrite).
+   Změny oproti 0.0.21:
+   - Pole "Jméno a příjmení" rozděleno na `first-name` a `last-name`.
 
    Změny oproti 0.0.20:
    - Klik "+ Přidat úsek" v Zpátečním nyní převrátí trasu úseku 1 do úseku 2
@@ -419,6 +419,17 @@
 
     var step1Wrap  = form.closest('[data-step="1"]');
     var inPageMode = !!(step1Wrap && step2Wrap);
+
+    // 0) Default-radio fallback (per-form): pokud Webflow neoznačil žádný radio
+    //    jako default-checked (typicky když je na stránce víc forem a Webflow
+    //    inicializuje jen první), nastavíme "Zpáteční" jako výchozí stav.
+    //    restoreState dole tuhle hodnotu přepíše, pokud má uložené něco jiného.
+    if (!form.querySelector('input[type="radio"][name="trip-type"]:checked')) {
+      var defaultRadio = form.querySelector(
+        'input[type="radio"][name="trip-type"][value="return"]'
+      );
+      if (defaultRadio) defaultRadio.checked = true;
+    }
 
     // 1) Obnovit stav (mód, úseky, hodnoty) ze sessionStorage do TOHOTO formu.
     //    Když je na stránce víc formů, oba dostanou stejný obsah ze sdílené storage.
